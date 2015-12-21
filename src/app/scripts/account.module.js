@@ -1,0 +1,15 @@
+(function () {
+    'use strict';
+
+    angular.module('account', [
+        'ui.router',
+        'ui.bootstrap',
+
+        'mue.helpers',
+        'mue.core.error-handler',
+
+        /*pages*/
+        'account.main',
+        'account.login'
+    ]);
+})();
