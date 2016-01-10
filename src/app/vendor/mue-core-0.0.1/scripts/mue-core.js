@@ -25,6 +25,9 @@
     ]);
 })();
 (function(){
+    angular.module('mue.core.components.helpers', []);
+})();
+(function(){
     angular.module('mue.core.components.list-group', [
     ]);
 })();
@@ -763,6 +766,63 @@ angular.module('mue.core.components.header')
             }
         };
     });
+(function () {
+    angular.module('mue.core.components.helpers').directive('clearText', function () {
+        return {
+            restrict: 'A',
+
+            link: function ($scope, element) {
+                var brs = element[0].querySelectorAll('br');
+
+                _.each(brs, function (br) {
+                    br.remove();
+                });
+            }
+        };
+    });
+})();
+(function () {
+    angular.module('mue.core.components.helpers').directive('deviceHeight', ['$window', '$timeout', function ($window, $timeout) {
+        return {
+            restrict: 'A',
+
+            link: function ($scope, element) {
+                element.css('height', $window.innerHeight + 'px');
+
+                angular.element($window).bind('resize', function () {
+                    element.css('height', $window.innerHeight + 'px');
+                });
+            }
+        };
+    }]);
+})();
+(function () {
+    angular.module('mue.core.components.helpers').directive('fallbackImg', ['$timeout', function ($timeout) {
+        return {
+            restrict: 'A',
+
+            link: function ($scope, element, attrs) {
+                function _fallbackImg() {
+                    if (attrs.fallbackImg) {
+                        element.attr("src", attrs.fallbackImg);
+                    } else {
+                        element.remove();
+                    }
+                }
+
+                $timeout(function () {
+                    if (!element.attr('src')) {
+                        _fallbackImg();
+                    } else {
+                        element.bind('error', function () {
+                            _fallbackImg();
+                        });
+                    }
+                });
+            }
+        };
+    }]);
+})();
 angular.module('mue.core.components.list-group')
     .directive('mueListGroup', function () {
         return {
