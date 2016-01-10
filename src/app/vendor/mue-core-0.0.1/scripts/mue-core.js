@@ -1,4 +1,15 @@
 (function(){
+    angular.module('mue.core.auth-account', [
+        'mue.core.security',
+        'mue.core.resources'
+    ]);
+})();
+(function(){
+    angular.module('mue.core.auth-proxy', [
+        'mue.core.security'
+    ]);
+})();
+(function(){
     angular.module('mue.core.components.date-switcher', [
         'mue.core.components.date-viewer'
     ]);
@@ -10,7 +21,7 @@
 })();
 (function(){
     angular.module('mue.core.components.header', [
-        'mue.core.security'
+        'mue.core.auth-proxy'
     ]);
 })();
 (function(){
@@ -19,7 +30,7 @@
 })();
 (function(){
     angular.module('mue.core.components.login', [
-        'mue.core.security'
+        'mue.core.auth-proxy'
     ]);
 })();
 (function(){
@@ -57,17 +68,17 @@
 })();
 (function () {
     'use strict';
-    angular.module('mue.core.error-handler').config(['$provide', function ($provide) {
+    angular.module('mue.core.error-handler').config(['$provide', '$httpProvider', function ($provide, $httpProvider) {
         // decorate angular $exceptionHandler service to intercept script errors
         $provide.decorator('$exceptionHandler', ['$delegate', '$injector', function ($delegate, $injector) {
             return function (exception, cause) {
                 $injector.get('mueScriptErrorHandler').handleScriptError(exception, cause);
+
                 $delegate(exception, cause);
             };
         }]);
     }]);
 })();
-
 (function () {
     'use strict';
     angular.module('mue.core.security').config(['$httpProvider', function ($httpProvider) {
@@ -88,7 +99,7 @@
 (function () {
     'use strict';
     angular.module('mue.core.error-handler').constant('MUE_ERROR_MESSAGES', {
-        httpDefaultError: 'An unexpected server communication error has occurred. Status: %s.',
+        httpDefaultError: 'An unexpected server communication error has occurred. Status: ',
         httpNetworkError: 'Network communication error has occurred.',
         scriptError: 'An unexpected script error has occurred.'
     });
@@ -107,6 +118,169 @@
 })();
 
 (function () {
+    'use strict';
+    angular.module('mue.core.auth-account').factory('mueAuthAccount', ['$q', '$rootScope', 'MUE_AUTH_EVENTS', 'AuthAccountResource', function ($q, $rootScope, MUE_AUTH_EVENTS, AuthAccountResource) {
+        function login(credentials) {
+            return AuthAccountResource.login(credentials).then(function (data) {
+                data.client_token = data.token;
+
+                $rootScope.$broadcast(MUE_AUTH_EVENTS.loginSuccess, data);
+            });
+        }
+
+        function logout() {
+            $rootScope.$broadcast(MUE_AUTH_EVENTS.logoutSuccess);
+        }
+
+        return {
+            login: login,
+            logout: logout
+        };
+    }]);
+})();
+
+(function () {
+    'use strict';
+    angular.module('mue.core.auth-proxy').provider('mueAuthProxy', function () {
+        var applicationOauthKey = null,
+            timeout = 1000 * 60 * 2,
+            origin = 'http://proxy.mue.in.ua',
+            provideServer = 'http://proxy.mue.in.ua/provide/',
+            provide = null;
+
+        function setOauthKey(oauthKey) {
+            applicationOauthKey = oauthKey;
+        }
+
+        function config(options) {
+            options = options || {};
+
+            if (options.origin) {
+                origin = options.origin;
+                provideServer = origin + '/provide/';
+            }
+        }
+
+        return {
+            setOauthKey: setOauthKey,
+
+            config: config,
+
+            $get: ['$q', '$rootScope', 'MUE_AUTH_EVENTS', function ($q, $rootScope, MUE_AUTH_EVENTS) {
+                function Provide() {
+                    this.timeout = 1000 * 60; // on minute
+                    this.initialize();
+                }
+
+                Provide.prototype = {
+                    initialize: function () {},
+
+                    open: function () {
+                        var me = this;
+
+                        this.defer = $q.defer();
+
+                        this.window = window.open(provideServer + applicationOauthKey);
+
+                        window.addEventListener("message", function (e) {
+                            me.receiveMessage(e);
+                        }, false);
+
+                        this.openTimeout = setTimeout(function () {
+                            me.reject('Timeout');
+                        }, timeout);
+
+                        this.openInterval = setInterval(function () {
+                            me.window.postMessage({
+                                origin: window.location.origin,
+                                host: window.location.host,
+                                href: window.location.href
+                            }, '*');
+                        }, 500);
+
+                        this.windowClosedInterval = setInterval(function () {
+                            if (me.window.closed) {
+                                me.reject('Window was closed');
+                            }
+                        }, 1000);
+
+                        return this.defer.promise;
+                    },
+
+                    reject: function (errorMessage) {
+                        this.clearOpenInterval();
+                        this.clearWindowClosedInterval();
+                        this.clearOpenTimeout();
+                        this.unSubscribeMessage();
+                        this.defer.reject({
+                            status: 500,
+                            message: errorMessage || 'Server error'
+                        });
+                    },
+
+                    unSubscribeMessage: function () {
+                        window.removeEventListener("message", this.receiveMessage, false);
+                    },
+
+                    clearWindowClosedInterval: function () {
+                        clearInterval(this.windowClosedInterval);
+                    },
+
+                    clearOpenInterval: function () {
+                        if (this.openInterval) {
+                            clearInterval(this.openInterval);
+                            this.openInterval = null;
+                        }
+                    },
+
+                    clearOpenTimeout: function () {
+                        if (this.openTimeout) {
+                            clearTimeout(this.openTimeout);
+                            this.openTimeout = null;
+                        }
+                    },
+
+                    receiveMessage: function (event) {
+                        if (event.origin == origin) {
+                            this.clearOpenInterval();
+                            this.clearOpenTimeout();
+                            this.unSubscribeMessage();
+
+                            var data = JSON.parse(event.data);
+
+                            if (data.status == 200) {
+                                this.defer.resolve(data);
+                            } else {
+                                this.defer.reject(data);
+                            }
+                        }
+                    }
+                };
+
+                function login() {
+                    (new Provide()).open().then(function (data) {
+                        $rootScope.$broadcast(MUE_AUTH_EVENTS.loginSuccess, data);
+                    });
+                }
+
+                function logout() {
+                    $rootScope.$broadcast(MUE_AUTH_EVENTS.logoutSuccess);
+                }
+
+                if (!applicationOauthKey) {
+                    throw new Error('mueAuthUserResource service has not been configured properly.');
+                }
+
+                return {
+                    login: login,
+                    logout: logout
+                };
+            }]
+        };
+    });
+})();
+
+(function () {
     angular.module('mue.core.error-handler').factory('mueScriptErrorHandler', ['growl', 'MUE_ERROR_MESSAGES', function (growl, MUE_ERROR_MESSAGES) {
         function handleScriptError(exception, cause) {
             var message = MUE_ERROR_MESSAGES.scriptError;
@@ -120,6 +294,54 @@
 
         return {
             handleScriptError: handleScriptError
+        };
+    }]);
+})();
+(function () {
+    angular.module('mue.core.error-handler').factory('mueHttpResponseErrorInterceptor', ['$q', 'mueServerErrorHandler', function ($q, mueServerErrorHandler) {
+        return {
+            responseError: function (response) {
+                mueServerErrorHandler.handleServerResponseError(response);
+
+                return $q.reject(response);
+            }
+        };
+    }]);
+})();
+(function () {
+    angular.module('mue.core.error-handler').factory('mueServerErrorHandler', ['growl', 'MUE_ERROR_MESSAGES', function (growl, MUE_ERROR_MESSAGES) {
+        function handleServerResponseError(response) {
+            var error = _getServerResponseErrorDetails(response);
+
+            if (!error) {
+                if (response.status === 0) {
+                    error = MUE_ERROR_MESSAGES.httpNetworkError;
+                } else {
+                    var status = response.status || '';
+
+                    if (response.statusText) {
+                        status += ' ' + response.statusText;
+                    }
+
+                    error = MUE_ERROR_MESSAGES.httpDefaultError + status;
+                }
+            }
+
+            _addErrorMessage(error);
+        }
+
+        function _addErrorMessage(msg) {
+            growl.addErrorMessage(_.trunc(msg, 500));
+        }
+
+        function _getServerResponseErrorDetails(response) {
+            if (response && response.data && _.isString(response.data.message)) {
+                return response.data.message;
+            }
+        }
+
+        return {
+            handleServerResponseError: handleServerResponseError
         };
     }]);
 })();
@@ -261,8 +483,10 @@
 
         return {
             loginState: loginState,
+
             appState: appState,
-            $get: ['$state', '$rootScope', '$q', 'mueAuthUserResource', 'MueUserResource', 'MueResource', 'mueSession', 'mueToken', 'MUE_AUTH_EVENTS', function ($state, $rootScope, $q, mueAuthUserResource, MueUserResource, MueResource, mueSession, mueToken, MUE_AUTH_EVENTS) {
+
+            $get: ['$state', '$rootScope', '$q', 'MueUserResource', 'MueResource', 'mueSession', 'mueToken', 'MUE_AUTH_EVENTS', function ($state, $rootScope, $q, MueUserResource, MueResource, mueSession, mueToken, MUE_AUTH_EVENTS) {
                 if (!_loginState || !_loginState.name || !_appState) {
                     throw new Error('mueAuthentication service has not been configured properly.');
                 }
@@ -271,34 +495,7 @@
 
                 /**
                  * @ngdoc method
-                 * @name mueAuthentication#login
-                 *
-                 * @description
-                 * Authenticates the user.
-                 */
-                function login() {
-                    return mueAuthUserResource.login();
-                }
-
-                /**
-                 * @ngdoc method
-                 * @name mueAuthentication#logout
-                 *
-                 * @description
-                 * Signs the user out of the application.
-                 *
-                 * @returns {Promise} A promise that will be resolved when a user is logged out, or if the logout failed.
-                 */
-                function logout() {
-                    mueToken.destroy();
-                    mueSession.destroy();
-
-                    $rootScope.$broadcast(MUE_AUTH_EVENTS.logoutSuccess);
-                }
-
-                /**
-                 * @ngdoc method
-                 * @name rxAuthentication#initSession
+                 * @name mueAuthentication#initSession
                  *
                  * @description
                  * Initializes session by loading details for current user.
@@ -361,7 +558,11 @@
                 $rootScope.$on(MUE_AUTH_EVENTS.loginSuccess, _loginSuccessHandler);
 
                 function _onLogout() {
+                    mueToken.destroy();
+                    mueSession.destroy();
+
                     afterLoginState = _appState;
+
                     _redirectToLoginState();
                 }
 
@@ -383,8 +584,6 @@
                 });
 
                 return {
-                    login: login,
-                    logout: logout,
                     initSession: initSession
                 };
             }]
@@ -443,7 +642,7 @@
         }
 
         function _destroy() {
-            localStorage.setItem(itemName, null);
+            localStorage.setItem(itemName, '');
         }
 
         function _getToken() {
@@ -550,46 +749,20 @@ angular.module('mue.core.components.date-viewer')
             }
         };
     });
-/**
- * @ngdoc directive
- * @name mue.core.header.directive:mueHeader
- * @restrict E
- * @element mue-header
- *
- * @description
- * Test
- *
- *
- <example module="test">
-
- <file name="index.html">
- <div ng-controller="Test">
- <mue-header></mue-header>
- </div>
- </file>
-
- <file name="script.js">
- angular.module('test', ['mue.core.header']).controller('Test', function($scope){});
- </file>
-
- </example>
- */
-
 angular.module('mue.core.components.header')
-    .directive('mueHeader', ['mueAuthentication', function (mueAuthentication) {
+    .directive('mueHeader', function () {
         return {
             restrict: 'E',
             templateUrl: 'scripts/components/header/header.directive.html',
+
             scope: {
                 mueConfig: '='
             },
+
             link: function (scope) {
-                scope.logoutHandler = function () {
-                    mueAuthentication.logout();
-                };
             }
         };
-    }]);
+    });
 angular.module('mue.core.components.list-group')
     .directive('mueListGroup', function () {
         return {
@@ -601,19 +774,17 @@ angular.module('mue.core.components.list-group')
         };
     });
 angular.module('mue.core.components.login')
-    .directive('mueLogin', ['mueAuthentication', 'MUE_AUTH_EVENTS', '$rootScope', function (mueAuthentication, MUE_AUTH_EVENTS, $rootScope) {
+    .directive('mueLogin', ['mueAuthProxy', function (mueAuthProxy) {
         return {
             restrict: 'E',
             templateUrl: 'scripts/components/login/login.directive.html',
+
             scope: {
                 mueConfig: '='
             },
+
             link: function (scope) {
-                scope.login = function () {
-                    mueAuthentication.login().then(function (data) {
-                        $rootScope.$broadcast(MUE_AUTH_EVENTS.loginSuccess, data);
-                    });
-                };
+                scope.login = mueAuthProxy.login;
             }
         };
     }]);
@@ -663,6 +834,18 @@ angular.module('mue.core.components.sidebar')
 })();
 (function () {
     'use strict';
+    angular.module('mue.core.resources').factory('AuthAccountResource', ['$q', 'MueResource', function ($q, MueResource) {
+        var Account = MueResource.withConfig(function (RestangularConfigurer) {});
+
+        return {
+            login: function (credentials) {
+                return Account.all('/sign').post(credentials);
+            }
+        };
+    }]);
+})();
+(function () {
+    'use strict';
     angular.module('mue.core.resources').factory('MueUserResource', ['$q', 'MueResource', function ($q, MueResource) {
         var user = MueResource.one('account/user');
 
@@ -672,143 +855,7 @@ angular.module('mue.core.components.sidebar')
             }
         };
     }]);
-})();
-(function () {
-    'use strict';
-    angular.module('mue.core.security').provider('mueAuthUserResource', function () {
-        var applicationOauthKey = null,
-            timeout = 1000 * 60 * 2,
-            origin = 'http://proxy.mue.in.ua',
-            provideServer = 'http://proxy.mue.in.ua/provide/',
-            provide = null;
-
-        function setOauthKey(oauthKey) {
-            applicationOauthKey = oauthKey;
-        }
-
-        function config(options) {
-            options = options || {};
-
-            if (options.origin) {
-                origin = options.origin;
-                provideServer = origin + '/provide/';
-            }
-        }
-
-        return {
-            setOauthKey: setOauthKey,
-
-            config: config,
-
-            $get: ['$q', function ($q) {
-                function Provide() {
-                    this.timeout = 1000 * 60; // on minute
-                    this.initialize();
-                }
-
-                Provide.prototype = {
-                    initialize: function () {
-                    },
-
-                    open: function () {
-                        var me = this;
-
-                        this.defer = $q.defer();
-
-                        this.window = window.open(provideServer + applicationOauthKey);
-
-                        window.addEventListener("message", function (e) {
-                            me.receiveMessage(e);
-                        }, false);
-
-                        this.openTimeout = setTimeout(function () {
-                            me.reject('Timeout');
-                        }, timeout);
-
-                        this.openInterval = setInterval(function () {
-                            me.window.postMessage({
-                                origin: window.location.origin,
-                                host: window.location.host,
-                                href: window.location.href
-                            }, '*');
-                        }, 500);
-
-                        this.windowClosedInterval = setInterval(function () {
-                            if (me.window.closed) {
-                                me.reject('Window was closed');
-                            }
-                        }, 1000);
-
-                        return this.defer.promise;
-                    },
-
-                    reject: function (errorMessage) {
-                        this.clearOpenInterval();
-                        this.clearWindowClosedInterval();
-                        this.clearOpenTimeout();
-                        this.unSubscribeMessage();
-                        this.defer.reject({
-                            status: 500,
-                            message: errorMessage || 'Server error'
-                        });
-                    },
-
-                    unSubscribeMessage: function () {
-                        window.removeEventListener("message", this.receiveMessage, false);
-                    },
-
-                    clearWindowClosedInterval: function () {
-                        clearInterval(this.windowClosedInterval);
-                    },
-
-                    clearOpenInterval: function () {
-                        if (this.openInterval) {
-                            clearInterval(this.openInterval);
-                            this.openInterval = null;
-                        }
-                    },
-
-                    clearOpenTimeout: function () {
-                        if (this.openTimeout) {
-                            clearTimeout(this.openTimeout);
-                            this.openTimeout = null;
-                        }
-                    },
-
-                    receiveMessage: function (event) {
-                        if (event.origin == origin) {
-                            this.clearOpenInterval();
-                            this.clearOpenTimeout();
-                            this.unSubscribeMessage();
-
-                            var data = JSON.parse(event.data);
-
-                            if (data.status == 200) {
-                                this.defer.resolve(data);
-                            } else {
-                                this.defer.reject(data);
-                            }
-                        }
-                    }
-                };
-
-                function login() {
-                    provide = new Provide();
-                    return provide.open();
-                }
-
-                if (!applicationOauthKey) {
-                    throw new Error('mueAuthUserResource service has not been configured properly.');
-                }
-
-                return {
-                    login: login
-                };
-            }]
-        };
-    });
-})();
-(function () {
+})();(function () {
   angular.module('mue.helpers').run(['$templateCache', function($templateCache) {
   'use strict';
 

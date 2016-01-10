@@ -9,7 +9,8 @@
         'mue.core.error-handler',
 
         /*pages*/
-        'account.main',
-        'account.login'
+        'account.approval',
+        'account.landing',
+        'account.sign'
     ]);
 })();
