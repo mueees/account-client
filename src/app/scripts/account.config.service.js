@@ -3,7 +3,7 @@
 
     angular.module('account').provider('accountConfig', function () {
         var config = {
-            environment: 'production'
+            /*environment: 'production'*/
         };
 
         function isProduction() {

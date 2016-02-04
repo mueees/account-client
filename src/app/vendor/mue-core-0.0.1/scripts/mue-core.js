@@ -122,12 +122,17 @@
 
 (function () {
     'use strict';
-    angular.module('mue.core.auth-account').factory('mueAuthAccount', ['$q', '$rootScope', 'MUE_AUTH_EVENTS', 'AuthAccountResource', function ($q, $rootScope, MUE_AUTH_EVENTS, AuthAccountResource) {
+    angular.module('mue.core.auth-account').factory('mueAuthAccount', ['$q', '$rootScope', 'MUE_AUTH_EVENTS', 'AuthAccountResource', 'growl', function ($q, $rootScope, MUE_AUTH_EVENTS, AuthAccountResource, growl) {
         function login(credentials) {
             return AuthAccountResource.login(credentials).then(function (data) {
-                data.client_token = data.token;
-
-                $rootScope.$broadcast(MUE_AUTH_EVENTS.loginSuccess, data);
+                // sign in
+                if (data.token) {
+                    data.client_token = data.token;
+                    $rootScope.$broadcast(MUE_AUTH_EVENTS.loginSuccess, data);
+                } else {
+                    // sign up
+                    growl.addInfoMessage('Please confirm account. Check your email.');
+                }
             });
         }
 
@@ -334,7 +339,7 @@
         }
 
         function _addErrorMessage(msg) {
-            growl.addErrorMessage(_.trunc(msg, 500));
+            growl.addErrorMessage(_.trunc(msg, 500), { translateMessage: false });
         }
 
         function _getServerResponseErrorDetails(response) {
